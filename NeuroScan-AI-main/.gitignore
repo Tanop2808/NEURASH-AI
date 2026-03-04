@@ -1,8 +1,10 @@
-secrets.toml
-.stsecrets.toml
-.env
-*.h5
+node_modules/
 __pycache__/
 *.pyc
+.env
+*.h5
+venv/
+.venv/
+dist/
 .DS_Store
-.streamlit/
+*.log
