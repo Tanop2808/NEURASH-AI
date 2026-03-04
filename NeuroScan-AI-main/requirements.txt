@@ -1,11 +1,8 @@
-streamlit
-opencv-python-headless
+flask
+flask-cors
+tensorflow
 numpy
 pillow
-keras
-tensorflow            
-streamlit-lottie
+PyJWT
+google-genai
 requests
-plotly
-reportlab
-google-generativeai
