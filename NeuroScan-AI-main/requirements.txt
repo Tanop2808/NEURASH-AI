@@ -1,0 +1,11 @@
+streamlit
+opencv-python-headless
+numpy
+pillow
+keras
+tensorflow            
+streamlit-lottie
+requests
+plotly
+reportlab
+google-generativeai
