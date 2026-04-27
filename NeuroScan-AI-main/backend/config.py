@@ -17,12 +17,16 @@ class Config:
 
     CLASS_NAMES = ["No Tumor", "Tumor", "Unsupported Image"]
 
-    GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyAfaBYeJc2RF4DyuXVtUWtn_vTpwF4GsZA")  # ← ADD REAL KEY
+    GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyA7wSP0-jSxKMK0IDkZZ4luHx1ttpTzhBo")  # ← ADD REAL KEY
     GEMINI_MODEL_ID = "gemini-2.5-flash"
 
     JWT_SECRET = os.environ.get("JWT_SECRET", "neuroscan-jwt-secret")  # ← ADD THIS LINE
 
     N8N_WEBHOOK_URL = os.environ.get(
         "N8N_WEBHOOK_URL",
-        "https://ajayyyy.app.n8n.cloud/webhook/neuroscan-report"
+        "https://tanop28.app.n8n.cloud/webhook/neuroscan-report"
     )
+
+
+
+    

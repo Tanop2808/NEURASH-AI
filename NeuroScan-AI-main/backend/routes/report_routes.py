@@ -42,6 +42,7 @@ def generate_and_send_report():
     prediction = data.get('prediction')
     confidence = data.get('confidence')
     all_probabilities = data.get('all_probabilities')
+    email = data.get('email')
 
     if not all([prediction, confidence is not None, all_probabilities]):
         return jsonify({"error": "Missing fields: prediction, confidence, all_probabilities"}), 400
@@ -52,16 +53,33 @@ def generate_and_send_report():
     except Exception as e:
         return jsonify({"error": f"Gemini report generation failed: {str(e)}"}), 500
 
-    # Step 2: Send via n8n webhook
-    try:
-        webhook_result = send_report_via_webhook(report, prediction, confidence)
-    except Exception as e:
-        return jsonify({
-            "report": report,
-            "webhook": {"success": False, "message": str(e)}
-        }), 207
-
     return jsonify({
-        "report": report,
-        "webhook": webhook_result
+        "report": report
     }), 200
+
+@report_bp.route('/send-email', methods=['POST'])
+@token_required
+def send_email():
+    prediction = request.form.get('prediction')
+    confidence_str = request.form.get('confidence')
+    report = request.form.get('report')
+    email = request.form.get('email')
+    
+    if not all([prediction, confidence_str, report]):
+        return jsonify({"error": "Missing required text fields"}), 400
+        
+    try:
+        confidence = float(confidence_str)
+    except ValueError:
+        return jsonify({"error": "Invalid confidence format"}), 400
+
+    pdf_file = None
+    if 'pdf' in request.files:
+        pdf_file = request.files['pdf'].read()
+
+    try:
+        webhook_result = send_report_via_webhook(report, prediction, confidence, email, pdf_file)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    return jsonify(webhook_result), 200

@@ -1,16 +1,22 @@
 import requests
 from config import Config
 
-def send_report_via_webhook(report: str, prediction: str, confidence: float) -> dict:
-    payload = {
+def send_report_via_webhook(report: str, prediction: str, confidence: float, email: str = None, pdf_file=None) -> dict:
+    data = {
         "prediction": prediction,
         "confidence": f"{confidence:.2%}",
-        "report": report
+        "report": report,
+        "email": email
     }
+
+    files = None
+    if pdf_file:
+        files = {'attachment': ('report.pdf', pdf_file, 'application/pdf')}
 
     response = requests.post(
         Config.N8N_WEBHOOK_URL,
-        json=payload,
+        data=data,
+        files=files,
         timeout=10
     )
 

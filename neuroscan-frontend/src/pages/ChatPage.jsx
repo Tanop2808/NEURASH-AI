@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import api from '../api';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([
@@ -30,26 +31,18 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('https://neurash-ai.onrender.com/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMsg].map(m => ({
-            role: m.role,
-            content: m.content
-          }))
-        })
+      const response = await api.post('/chat', {
+        messages: [...messages, userMsg].map(m => ({
+          role: m.role,
+          content: m.content
+        }))
       });
 
-      const data = await response.json();
-      const reply = data.reply || data.error || 'Sorry, I could not generate a response.';
+      const reply = response.data.reply || 'Sorry, I could not generate a response.';
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' }]);
+      const errorMsg = err.response?.data?.error || 'Sorry, something went wrong. Please try again.';
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
     } finally {
       setLoading(false);
     }

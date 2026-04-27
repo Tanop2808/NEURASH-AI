@@ -4,8 +4,14 @@ import io
 import tensorflow as tf
 from config import Config
 
-# Load model once at startup
-model = tf.keras.models.load_model(Config.MODEL_PATH)
+# Lazy loading for the model
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        model = tf.keras.models.load_model(Config.MODEL_PATH)
+    return model
 
 def preprocess_image(file_bytes: bytes) -> np.ndarray:
     img = Image.open(io.BytesIO(file_bytes)).convert("L")  # ← "L" = grayscale, was "RGB"
@@ -15,8 +21,9 @@ def preprocess_image(file_bytes: bytes) -> np.ndarray:
     return np.expand_dims(arr, axis=0)                     # shape (1, 128, 128, 1)
 
 def predict(file_bytes: bytes) -> dict:
+    current_model = get_model()
     input_arr = preprocess_image(file_bytes)
-    preds = model.predict(input_arr)[0]
+    preds = current_model.predict(input_arr)[0]
     class_idx = int(np.argmax(preds))
     confidence = float(np.max(preds))
 

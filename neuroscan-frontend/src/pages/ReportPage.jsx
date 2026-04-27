@@ -1,8 +1,316 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useRef } from 'react';
-import { generateReport } from '../api';
+import { generateReport, sendEmailWithPdf } from '../api';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+
+const buildPdfInstance = (patient, prediction, confidence, all_probabilities, imageUrl, report) => {
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = 210;
+  const pageH = 297;
+  const margin = 15;
+  const contentW = pageW - margin * 2;
+  let y = margin;
+
+  // ── Colors ──
+  const cyan = [0, 210, 200];
+  const dark = [5, 8, 16];
+  const white = [232, 240, 254];
+  const muted = [120, 140, 160];
+  const red = [255, 107, 107];
+  const green = [0, 210, 200];
+
+  // ── Background ──
+  pdf.setFillColor(...dark);
+  pdf.rect(0, 0, pageW, pageH, 'F');
+
+  // ── Header bar ──
+  pdf.setFillColor(8, 13, 26);
+  pdf.rect(0, 0, pageW, 28, 'F');
+  pdf.setDrawColor(...cyan);
+  pdf.setLineWidth(0.5);
+  pdf.line(0, 28, pageW, 28);
+
+  // Logo circle
+  pdf.setFillColor(...cyan);
+  pdf.circle(margin + 5, 14, 5, 'F');
+  pdf.setFillColor(...dark);
+  pdf.circle(margin + 5, 14, 2.5, 'F');
+
+  // Title
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(16);
+  pdf.setTextColor(...white);
+  pdf.text('NEURASH AI', margin + 14, 12);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8);
+  pdf.setTextColor(...muted);
+  pdf.text('Advanced Brain MRI Analysis Platform', margin + 14, 18);
+
+  // Date
+  pdf.setFontSize(7);
+  pdf.text(`Generated: ${new Date().toLocaleString()}`, pageW - margin, 12, { align: 'right' });
+  pdf.text('Model: Gemini 2.5 Flash + TensorFlow CNN', pageW - margin, 18, { align: 'right' });
+
+  y = 38;
+
+  // ── Section helper ──
+  const sectionTitle = (title, color = cyan) => {
+    pdf.setFillColor(color[0], color[1], color[2], 0.1);
+    pdf.setDrawColor(...color);
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, y, margin + 3, y);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.setTextColor(...color);
+    pdf.text(title.toUpperCase(), margin + 5, y + 0.5);
+    y += 6;
+    pdf.setDrawColor(...color, 0.2);
+    pdf.setLineWidth(0.2);
+    pdf.line(margin, y, pageW - margin, y);
+    y += 4;
+  };
+
+  const box = (h, color = [15, 20, 35]) => {
+    pdf.setFillColor(...color);
+    pdf.roundedRect(margin, y, contentW, h, 2, 2, 'F');
+  };
+
+  // ── 1. Patient Information ──
+  sectionTitle('Patient Information');
+  box(28);
+  const patFields = [
+    ['Patient Name', patient.name || 'N/A'],
+    ['Patient ID', patient.id || 'N/A'],
+    ['Age', patient.age ? `${patient.age} years` : 'N/A'],
+    ['Gender', patient.gender || 'N/A'],
+    ['Email', patient.email || 'N/A'],
+  ];
+  const col1X = margin + 4;
+  const col2X = margin + 50;
+  const col3X = margin + 110;
+  const col4X = margin + 160;
+
+  pdf.setFontSize(7.5);
+  patFields.slice(0, 2).forEach(([label, val], i) => {
+    const x = i === 0 ? col1X : col3X;
+    pdf.setTextColor(...muted);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(label, x, y + 6);
+    pdf.setTextColor(...white);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(val, x, y + 11);
+  });
+  patFields.slice(2, 4).forEach(([label, val], i) => {
+    const x = i === 0 ? col1X : col3X;
+    pdf.setTextColor(...muted);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(label, x, y + 17);
+    pdf.setTextColor(...white);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(val, x, y + 22);
+  });
+  pdf.setTextColor(...muted);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text('Email', col1X, y + 28);
+  y += 32;
+
+  y += 6;
+
+  // ── 2. Analysis Result ──
+  const isTumor = prediction === 'Tumor';
+  const resultColor = isTumor ? red : green;
+  sectionTitle('Analysis Result', resultColor);
+  box(32, [15, 20, 35]);
+
+  // Status badge
+  pdf.setFillColor(...resultColor);
+  pdf.roundedRect(margin + 4, y + 4, 35, 8, 1, 1, 'F');
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7);
+  pdf.setTextColor(...dark);
+  pdf.text(isTumor ? 'CRITICAL FINDING' : 'CLEAR', margin + 21.5, y + 9, { align: 'center' });
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(18);
+  pdf.setTextColor(...resultColor);
+  pdf.text(prediction, margin + 4, y + 22);
+
+  // Confidence
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8);
+  pdf.setTextColor(...muted);
+  pdf.text('Confidence Score', pageW - margin - 50, y + 8);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(20);
+  pdf.setTextColor(...resultColor);
+  pdf.text(`${confidence.toFixed(1)}%`, pageW - margin - 50, y + 22);
+
+  // Confidence bar
+  pdf.setFillColor(20, 25, 40);
+  pdf.roundedRect(pageW - margin - 50, y + 24, 48, 3, 1, 1, 'F');
+  pdf.setFillColor(...resultColor);
+  pdf.roundedRect(pageW - margin - 50, y + 24, 48 * (confidence / 100), 3, 1, 1, 'F');
+
+  y += 38;
+  y += 4;
+
+  // ── 3. Probability Distribution ──
+  sectionTitle('Technical Findings — Class Probabilities');
+  const probEntries = Object.entries(all_probabilities);
+  box(probEntries.length * 12 + 6, [15, 20, 35]);
+
+  probEntries.forEach(([label, prob], i) => {
+    const barY = y + 4 + i * 12;
+    const barColor = label === 'Tumor' ? red : label === 'No Tumor' ? green : [255, 169, 77];
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(...white);
+    pdf.text(label, margin + 4, barY + 5);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(...barColor);
+    pdf.text(`${prob.toFixed(2)}%`, pageW - margin - 4, barY + 5, { align: 'right' });
+    // Bar bg
+    pdf.setFillColor(20, 25, 40);
+    pdf.roundedRect(margin + 45, barY, contentW - 55, 4, 1, 1, 'F');
+    // Bar fill
+    pdf.setFillColor(...barColor);
+    const fillW = Math.max((contentW - 55) * (prob / 100), 0.5);
+    pdf.roundedRect(margin + 45, barY, fillW, 4, 1, 1, 'F');
+  });
+  y += probEntries.length * 12 + 10;
+  y += 4;
+
+  // ── 4. MRI Scan Image ──
+  if (imageUrl) {
+    sectionTitle('MRI Scan Image');
+    try {
+      const imgH = 55;
+      box(imgH + 4, [15, 20, 35]);
+      pdf.addImage(imageUrl, 'JPEG', margin + contentW / 2 - 35, y + 2, 70, imgH, '', 'FAST');
+      y += imgH + 8;
+    } catch (e) {
+      y += 4;
+    }
+    y += 4;
+  }
+
+  // ── 5. AI Medical Report ──
+  if (report) {
+    // New page if needed
+    if (y > 200) {
+      pdf.addPage();
+      pdf.setFillColor(...dark);
+      pdf.rect(0, 0, pageW, pageH, 'F');
+      y = margin;
+    }
+    sectionTitle('AI Medical Report — Gemini Analysis');
+    const parseReport = (text) => {
+      const sections = [];
+      const lines = text.split('\n').filter(l => l.trim());
+      let current = null;
+      for (const line of lines) {
+        const headerMatch = line.match(/^\*\*(.+?)\*\*:?$/) || line.match(/^#+\s+(.+)/);
+        if (headerMatch) {
+          if (current) sections.push(current);
+          current = { title: headerMatch[1].replace(/\*\*/g, '').replace(/:$/, '').trim(), content: [] };
+        } else if (current) {
+          const clean = line.replace(/\*\*/g, '').replace(/^\*\s*/, '').trim();
+          if (clean) current.content.push(clean);
+        } else {
+          if (!current) current = { title: '', content: [] };
+          current.content.push(line.replace(/\*\*/g, '').trim());
+        }
+      }
+      if (current) sections.push(current);
+      return sections.filter(s => s.content.length > 0);
+    };
+
+    const sections = parseReport(report);
+    sections.forEach(section => {
+      if (y > pageH - 30) {
+        pdf.addPage();
+        pdf.setFillColor(...dark);
+        pdf.rect(0, 0, pageW, pageH, 'F');
+        y = margin;
+      }
+      if (section.title) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...cyan);
+        pdf.text(section.title.toUpperCase(), margin + 2, y);
+        y += 5;
+      }
+      section.content.forEach(line => {
+        if (y > pageH - 20) {
+          pdf.addPage();
+          pdf.setFillColor(...dark);
+          pdf.rect(0, 0, pageW, pageH, 'F');
+          y = margin;
+        }
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(...white);
+        const wrapped = pdf.splitTextToSize(line, contentW - 4);
+        pdf.text(wrapped, margin + 2, y);
+        y += wrapped.length * 4.5;
+      });
+      y += 4;
+    });
+  }
+
+  // ── 6. Technical Information ──
+  if (y > pageH - 50) {
+    pdf.addPage();
+    pdf.setFillColor(...dark);
+    pdf.rect(0, 0, pageW, pageH, 'F');
+    y = margin;
+  }
+  y += 2;
+  sectionTitle('Technical Information');
+  box(36, [15, 20, 35]);
+  const techInfo = [
+    ['AI Model', 'TensorFlow CNN (brain_tumor_model.h5)'],
+    ['Image Processing', 'Grayscale, 128×128px normalization'],
+    ['Classification Classes', 'No Tumor / Tumor / Unsupported Image'],
+    ['Report Generator', 'Google Gemini 2.5 Flash'],
+    ['Backend Framework', 'Flask + PyJWT Authentication'],
+    ['Platform', 'NEURASH AI v1.0'],
+  ];
+  techInfo.forEach(([label, val], i) => {
+    const row = Math.floor(i / 2);
+    const col = i % 2;
+    const tx = col === 0 ? margin + 4 : margin + contentW / 2 + 4;
+    const ty = y + 5 + row * 11;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7);
+    pdf.setTextColor(...muted);
+    pdf.text(label, tx, ty);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(...white);
+    pdf.text(val, tx, ty + 5);
+  });
+  y += 42;
+
+  // ── Footer ──
+  const totalPages = pdf.internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    pdf.setPage(i);
+    pdf.setFillColor(8, 13, 26);
+    pdf.rect(0, pageH - 12, pageW, 12, 'F');
+    pdf.setDrawColor(...cyan);
+    pdf.setLineWidth(0.3);
+    pdf.line(0, pageH - 12, pageW, pageH - 12);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(6.5);
+    pdf.setTextColor(...muted);
+    pdf.text('⚠ Medical Disclaimer: AI-generated report for informational purposes only. Not a substitute for professional medical advice.', margin, pageH - 6);
+    pdf.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 6, { align: 'right' });
+  }
+
+  return pdf;
+};
 
 export default function ReportPage() {
   const { state } = useLocation();
@@ -34,9 +342,31 @@ export default function ReportPage() {
       const probsAsDecimals = Object.fromEntries(
         Object.entries(all_probabilities).map(([k, v]) => [k, v / 100])
       );
-      const res = await generateReport(prediction, confidence / 100, probsAsDecimals);
+      // 1. Get Gemini report
+      const res = await generateReport(prediction, confidence / 100, probsAsDecimals, patient.email);
       setReport(res.report);
-      setWebhookStatus(res.webhook);
+      
+      // 2. Generate PDF invisibly
+      try {
+        const pdf = buildPdfInstance(patient, prediction, confidence, all_probabilities, imageUrl, res.report);
+        const pdfBlob = pdf.output('blob');
+        
+        // 3. Send email with PDF attached
+        const formData = new FormData();
+        formData.append('pdf', pdfBlob, 'NEURASH_Report.pdf');
+        formData.append('email', patient.email);
+        formData.append('prediction', prediction);
+        formData.append('confidence', confidence / 100);
+        formData.append('report', res.report);
+        
+        const emailRes = await sendEmailWithPdf(formData);
+        setWebhookStatus(emailRes);
+      } catch (pdfErr) {
+        console.error('PDF generation or email sending failed:', pdfErr);
+        const errMsg = pdfErr.response?.data?.error || pdfErr.response?.data?.message || pdfErr.message || 'Unknown error';
+        setWebhookStatus({ success: false, message: `Failed to send PDF attachment: ${errMsg}` });
+      }
+
       setGenerated(true);
     } catch (err) {
       setError(err.response?.data?.error || 'Report generation failed.');
@@ -48,311 +378,7 @@ export default function ReportPage() {
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const pageW = 210;
-      const pageH = 297;
-      const margin = 15;
-      const contentW = pageW - margin * 2;
-      let y = margin;
-
-      // ── Colors ──
-      const cyan = [0, 210, 200];
-      const dark = [5, 8, 16];
-      const white = [232, 240, 254];
-      const muted = [120, 140, 160];
-      const red = [255, 107, 107];
-      const green = [0, 210, 200];
-
-      // ── Background ──
-      pdf.setFillColor(...dark);
-      pdf.rect(0, 0, pageW, pageH, 'F');
-
-      // ── Header bar ──
-      pdf.setFillColor(8, 13, 26);
-      pdf.rect(0, 0, pageW, 28, 'F');
-      pdf.setDrawColor(...cyan);
-      pdf.setLineWidth(0.5);
-      pdf.line(0, 28, pageW, 28);
-
-      // Logo circle
-      pdf.setFillColor(...cyan);
-      pdf.circle(margin + 5, 14, 5, 'F');
-      pdf.setFillColor(...dark);
-      pdf.circle(margin + 5, 14, 2.5, 'F');
-
-      // Title
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(16);
-      pdf.setTextColor(...white);
-      pdf.text('NEURASH AI', margin + 14, 12);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(...muted);
-      pdf.text('Advanced Brain MRI Analysis Platform', margin + 14, 18);
-
-      // Date
-      pdf.setFontSize(7);
-      pdf.text(`Generated: ${new Date().toLocaleString()}`, pageW - margin, 12, { align: 'right' });
-      pdf.text('Model: Gemini 2.5 Flash + TensorFlow CNN', pageW - margin, 18, { align: 'right' });
-
-      y = 38;
-
-      // ── Section helper ──
-      const sectionTitle = (title, color = cyan) => {
-        pdf.setFillColor(color[0], color[1], color[2], 0.1);
-        pdf.setDrawColor(...color);
-        pdf.setLineWidth(0.3);
-        pdf.line(margin, y, margin + 3, y);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(9);
-        pdf.setTextColor(...color);
-        pdf.text(title.toUpperCase(), margin + 5, y + 0.5);
-        y += 6;
-        pdf.setDrawColor(...color, 0.2);
-        pdf.setLineWidth(0.2);
-        pdf.line(margin, y, pageW - margin, y);
-        y += 4;
-      };
-
-      const box = (h, color = [15, 20, 35]) => {
-        pdf.setFillColor(...color);
-        pdf.roundedRect(margin, y, contentW, h, 2, 2, 'F');
-      };
-
-      // ── 1. Patient Information ──
-      sectionTitle('Patient Information');
-      box(28);
-      const patFields = [
-        ['Patient Name', patient.name || 'N/A'],
-        ['Patient ID', patient.id || 'N/A'],
-        ['Age', patient.age ? `${patient.age} years` : 'N/A'],
-        ['Gender', patient.gender || 'N/A'],
-        ['Email', patient.email || 'N/A'],
-      ];
-      const col1X = margin + 4;
-      const col2X = margin + 50;
-      const col3X = margin + 110;
-      const col4X = margin + 160;
-
-      pdf.setFontSize(7.5);
-      patFields.slice(0, 2).forEach(([label, val], i) => {
-        const x = i === 0 ? col1X : col3X;
-        pdf.setTextColor(...muted);
-        pdf.setFont('helvetica', 'normal');
-        pdf.text(label, x, y + 6);
-        pdf.setTextColor(...white);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text(val, x, y + 11);
-      });
-      patFields.slice(2, 4).forEach(([label, val], i) => {
-        const x = i === 0 ? col1X : col3X;
-        pdf.setTextColor(...muted);
-        pdf.setFont('helvetica', 'normal');
-        pdf.text(label, x, y + 17);
-        pdf.setTextColor(...white);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text(val, x, y + 22);
-      });
-      pdf.setTextColor(...muted);
-      pdf.setFont('helvetica', 'normal');
-      pdf.text('Email', col1X, y + 28);
-      // wait we need to fix height
-      y += 32;
-
-      y += 6;
-
-      // ── 2. Analysis Result ──
-      const isTumor = prediction === 'Tumor';
-      const resultColor = isTumor ? red : green;
-      sectionTitle('Analysis Result', resultColor);
-      box(32, [15, 20, 35]);
-
-      // Status badge
-      pdf.setFillColor(...resultColor);
-      pdf.roundedRect(margin + 4, y + 4, 35, 8, 1, 1, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(7);
-      pdf.setTextColor(...dark);
-      pdf.text(isTumor ? 'CRITICAL FINDING' : 'CLEAR', margin + 21.5, y + 9, { align: 'center' });
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(18);
-      pdf.setTextColor(...resultColor);
-      pdf.text(prediction, margin + 4, y + 22);
-
-      // Confidence
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(...muted);
-      pdf.text('Confidence Score', pageW - margin - 50, y + 8);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(20);
-      pdf.setTextColor(...resultColor);
-      pdf.text(`${confidence.toFixed(1)}%`, pageW - margin - 50, y + 22);
-
-      // Confidence bar
-      pdf.setFillColor(20, 25, 40);
-      pdf.roundedRect(pageW - margin - 50, y + 24, 48, 3, 1, 1, 'F');
-      pdf.setFillColor(...resultColor);
-      pdf.roundedRect(pageW - margin - 50, y + 24, 48 * (confidence / 100), 3, 1, 1, 'F');
-
-      y += 38;
-      y += 4;
-
-      // ── 3. Probability Distribution ──
-      sectionTitle('Technical Findings — Class Probabilities');
-      const probEntries = Object.entries(all_probabilities);
-      box(probEntries.length * 12 + 6, [15, 20, 35]);
-
-      probEntries.forEach(([label, prob], i) => {
-        const barY = y + 4 + i * 12;
-        const barColor = label === 'Tumor' ? red : label === 'No Tumor' ? green : [255, 169, 77];
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(...white);
-        pdf.text(label, margin + 4, barY + 5);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(...barColor);
-        pdf.text(`${prob.toFixed(2)}%`, pageW - margin - 4, barY + 5, { align: 'right' });
-        // Bar bg
-        pdf.setFillColor(20, 25, 40);
-        pdf.roundedRect(margin + 45, barY, contentW - 55, 4, 1, 1, 'F');
-        // Bar fill
-        pdf.setFillColor(...barColor);
-        const fillW = Math.max((contentW - 55) * (prob / 100), 0.5);
-        pdf.roundedRect(margin + 45, barY, fillW, 4, 1, 1, 'F');
-      });
-      y += probEntries.length * 12 + 10;
-      y += 4;
-
-      // ── 4. MRI Scan Image ──
-      if (imageUrl) {
-        sectionTitle('MRI Scan Image');
-        try {
-          const imgH = 55;
-          box(imgH + 4, [15, 20, 35]);
-          pdf.addImage(imageUrl, 'JPEG', margin + contentW / 2 - 35, y + 2, 70, imgH, '', 'FAST');
-          y += imgH + 8;
-        } catch (e) {
-          y += 4;
-        }
-        y += 4;
-      }
-
-      // ── 5. AI Medical Report ──
-      if (report) {
-        // New page if needed
-        if (y > 200) {
-          pdf.addPage();
-          pdf.setFillColor(...dark);
-          pdf.rect(0, 0, pageW, pageH, 'F');
-          y = margin;
-        }
-        sectionTitle('AI Medical Report — Gemini Analysis');
-        const parseReport = (text) => {
-          const sections = [];
-          const lines = text.split('\n').filter(l => l.trim());
-          let current = null;
-          for (const line of lines) {
-            const headerMatch = line.match(/^\*\*(.+?)\*\*:?$/) || line.match(/^#+\s+(.+)/);
-            if (headerMatch) {
-              if (current) sections.push(current);
-              current = { title: headerMatch[1].replace(/\*\*/g, '').replace(/:$/, '').trim(), content: [] };
-            } else if (current) {
-              const clean = line.replace(/\*\*/g, '').replace(/^\*\s*/, '').trim();
-              if (clean) current.content.push(clean);
-            } else {
-              if (!current) current = { title: '', content: [] };
-              current.content.push(line.replace(/\*\*/g, '').trim());
-            }
-          }
-          if (current) sections.push(current);
-          return sections.filter(s => s.content.length > 0);
-        };
-
-        const sections = parseReport(report);
-        sections.forEach(section => {
-          if (y > pageH - 30) {
-            pdf.addPage();
-            pdf.setFillColor(...dark);
-            pdf.rect(0, 0, pageW, pageH, 'F');
-            y = margin;
-          }
-          if (section.title) {
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(8);
-            pdf.setTextColor(...cyan);
-            pdf.text(section.title.toUpperCase(), margin + 2, y);
-            y += 5;
-          }
-          section.content.forEach(line => {
-            if (y > pageH - 20) {
-              pdf.addPage();
-              pdf.setFillColor(...dark);
-              pdf.rect(0, 0, pageW, pageH, 'F');
-              y = margin;
-            }
-            pdf.setFont('helvetica', 'normal');
-            pdf.setFontSize(7.5);
-            pdf.setTextColor(...white);
-            const wrapped = pdf.splitTextToSize(line, contentW - 4);
-            pdf.text(wrapped, margin + 2, y);
-            y += wrapped.length * 4.5;
-          });
-          y += 4;
-        });
-      }
-
-      // ── 6. Technical Information ──
-      if (y > pageH - 50) {
-        pdf.addPage();
-        pdf.setFillColor(...dark);
-        pdf.rect(0, 0, pageW, pageH, 'F');
-        y = margin;
-      }
-      y += 2;
-      sectionTitle('Technical Information');
-      box(36, [15, 20, 35]);
-      const techInfo = [
-        ['AI Model', 'TensorFlow CNN (brain_tumor_model.h5)'],
-        ['Image Processing', 'Grayscale, 128×128px normalization'],
-        ['Classification Classes', 'No Tumor / Tumor / Unsupported Image'],
-        ['Report Generator', 'Google Gemini 2.5 Flash'],
-        ['Backend Framework', 'Flask + PyJWT Authentication'],
-        ['Platform', 'NEURASH AI v1.0'],
-      ];
-      techInfo.forEach(([label, val], i) => {
-        const row = Math.floor(i / 2);
-        const col = i % 2;
-        const tx = col === 0 ? margin + 4 : margin + contentW / 2 + 4;
-        const ty = y + 5 + row * 11;
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(7);
-        pdf.setTextColor(...muted);
-        pdf.text(label, tx, ty);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(...white);
-        pdf.text(val, tx, ty + 5);
-      });
-      y += 42;
-
-      // ── Footer ──
-      const totalPages = pdf.internal.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        pdf.setPage(i);
-        pdf.setFillColor(8, 13, 26);
-        pdf.rect(0, pageH - 12, pageW, 12, 'F');
-        pdf.setDrawColor(...cyan);
-        pdf.setLineWidth(0.3);
-        pdf.line(0, pageH - 12, pageW, pageH - 12);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(6.5);
-        pdf.setTextColor(...muted);
-        pdf.text('⚠ Medical Disclaimer: AI-generated report for informational purposes only. Not a substitute for professional medical advice.', margin, pageH - 6);
-        pdf.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 6, { align: 'right' });
-      }
-
+      const pdf = buildPdfInstance(patient, prediction, confidence, all_probabilities, imageUrl, report);
       const patientName = patient.name ? patient.name.replace(/\s+/g, '_') : 'Patient';
       pdf.save(`NEURASH_Report_${patientName}_${Date.now()}.pdf`);
     } catch (err) {

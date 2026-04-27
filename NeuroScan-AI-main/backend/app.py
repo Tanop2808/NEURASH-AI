@@ -16,4 +16,4 @@ app.register_blueprint(report_bp)
 app.register_blueprint(chat_bp)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
